@@ -127,6 +127,7 @@ one of them surfaces as `TARGETS: <unknown>` on the HPA - see the
 | `-u / --wva` CLI flag on any existing scenario | Quick toggle without editing files; uses defaults from `config/templates/values/defaults.yaml` |
 | `--spec guides/workload-autoscaling` | Dedicated scenario where every WVA knob is spelled out inline so you can tweak them per-experiment |
 | `--spec examples/multi-model-wva` | Multi-model scenario: two or more pools under one gateway, each with its own VA + HPA, one shared WVA controller |
+| `--spec guides/fma-autoscaling` | Same as `workload-autoscaling`, but the deployment method is **FMA (Fast Model Actuation)** instead of modelservice. WVA scales the FMA requester ReplicaSet; FMA's launcher-populator reconciles launchers to match. |
 
 ### 2a. Via the CLI flag
 
@@ -155,7 +156,39 @@ You'd choose this scenario when you want to:
 - Author a DoE experiment that sweeps over `wva.hpa.maxReplicas` or
   `wva.variantAutoscaling.variantCost`
 
-### 2c. Via the `multi-model-wva` scenario (multiple pools, one WVA controller)
+### 2c. Via the `fma-autoscaling` scenario (FMA deployment + WVA)
+
+```bash
+llmdbenchmark --spec guides/fma-autoscaling standup -p <namespace>
+```
+
+Same WVA configuration surface as `inference-scheduling-wva`, but with
+`fma.enabled: true` instead of `modelservice.enabled: true`. WVA targets
+the FMA requester ReplicaSet (`fma-requester-<model_id_label>`) rather
+than the modelservice decode Deployment, and the variant suffix becomes
+`-fma` instead of `-decode` (so a model deployed both ways could be
+autoscaled in parallel without VA/HPA name collisions).
+
+How the FMA path differs from modelservice in practice:
+
+- **What scales:** the requester ReplicaSet (admin-port shim that holds
+  the GPU lease). FMA's launcher-populator controller reconciles the
+  long-lived launcher pods to match.
+- **Pod label:** the requester pod template carries `llm-d.ai/variant:
+  <model_id_label>-fma`. WVA's ServiceMonitor relabels this onto scraped
+  vLLM metrics as `llm_d_ai_variant`, which the controller's
+  per-variant queries match on (label-based variant identification,
+  WVA repo PR #1145).
+- **WVA controller image:** PR #1145 is not yet in any tagged WVA
+  release. The scenario pins `quay.io/braulio/llm-d-wva:v4` (a custom
+  build with #1145 baked in). Once #1145 ships in a tagged GHCR release
+  (>v0.7.0), update the scenario to point back at the official image.
+
+Use this scenario when you want to exercise the FMA actuation path
+under WVA-driven scaling, or to A/B FMA vs. modelservice as the
+deployment mechanism while holding autoscaling behavior constant.
+
+### 2d. Via the `multi-model-wva` scenario (multiple pools, one WVA controller)
 
 ```bash
 llmdbenchmark --spec examples/multi-model-wva standup -p <namespace>
@@ -526,6 +559,8 @@ HPA, but it's still considered cluster-hygiene rude to run cluster-scoped.
 | Teardown logic | [`llmdbenchmark/teardown/steps/step_01_uninstall_helm.py`](../llmdbenchmark/teardown/steps/step_01_uninstall_helm.py) |
 | Smoketest WVA mixin | [`llmdbenchmark/smoketests/validators/wva.py`](../llmdbenchmark/smoketests/validators/wva.py) |
 | WVA-enabled scenario (the one to copy/edit for new experiments) | [`config/scenarios/guides/workload-autoscaling.yaml`](../config/scenarios/guides/workload-autoscaling.yaml) |
+| FMA + WVA scenario | [`config/scenarios/guides/fma-autoscaling.yaml`](../config/scenarios/guides/fma-autoscaling.yaml) |
+| FMA requester ReplicaSet (carries the `llm-d.ai/variant` pod label gated on `wva.enabled`) | [`config/templates/jinja/24_fma-deployment.yaml.j2`](../config/templates/jinja/24_fma-deployment.yaml.j2) |
 | Multi-model WVA example (N pools, 1 gateway, 1 controller) | [`config/scenarios/examples/multi-model-wva.yaml`](../config/scenarios/examples/multi-model-wva.yaml) |
 
 ---

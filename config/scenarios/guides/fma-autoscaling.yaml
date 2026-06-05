@@ -1,0 +1,174 @@
+# FMA + WVA WELL LIT PATH for LLM-D Deployment
+#
+# Deploys Fast Model Actuation (dual-pods) with the Workload Variant Autoscaler
+# (WVA) scaling the FMA requester ReplicaSet based on `wva_desired_replicas`.
+#
+# Companion to `guides/workload-autoscaling.yaml` (modelservice + WVA). This
+# scenario keeps the same WVA configuration surface so you can A/B FMA vs.
+# modelservice as the deployment mechanism while holding autoscaling behavior
+# constant.
+#
+# Running:
+#
+#   llmdbenchmark --spec guides/fma-autoscaling standup -p <namespace>
+#
+# Prerequisites (same as workload-autoscaling.yaml):
+#   - OpenShift cluster with user-workload-monitoring enabled
+#   - WVA controller image pulled from a registry your nodes can reach
+#
+# WVA image note:
+#   The default WVA image (defaults.yaml) tracks tagged GHCR releases. The
+#   FMA path requires the label-based variant identification from
+#   llm-d-workload-variant-autoscaler PR #1145, which is not yet in any
+#   tagged release. We pin to a custom build that has the change baked in.
+
+scenario:
+  # ============================================================================
+  # FMA + WVA - Qwen3-32B with FMA dual-pods, autoscaled by WVA
+  # ============================================================================
+  - name: "fma-autoscaling"
+
+    # =========================================================================
+    # MODEL CONFIGURATION (matches workload-autoscaling.yaml for A/B parity)
+    # =========================================================================
+    model:
+      name: Qwen/Qwen3-32B
+      shortName: qwen-qwen3-32b
+      path: models/Qwen/Qwen3-32B
+      huggingfaceId: Qwen/Qwen3-32B
+      size: 1Ti
+      maxModelLen: 16000
+      blockSize: 64
+      gpuMemoryUtilization: 0.95
+
+    # =========================================================================
+    # DEPLOYMENT METHOD - FMA (dual-pods) instead of modelservice
+    # =========================================================================
+    modelservice:
+      enabled: false
+
+    standalone:
+      enabled: false
+
+    fma:
+      enabled: true
+      # Iterations only matters for nop-harness actuation timing runs. With
+      # inference-perf the FMA requester pods are created once at standup,
+      # then WVA scales the requester ReplicaSet up/down during the run.
+      iterations: 1
+
+    # =========================================================================
+    # WVA CONFIGURATION
+    #
+    # Mirrors workload-autoscaling.yaml. Templates 27_wva-variantautoscaling
+    # and 28_wva-hpa detect `fma.enabled: true` and retarget the VA + HPA at
+    # the FMA requester ReplicaSet (`fma-requester-<model_id_label>`) instead
+    # of the modelservice decode Deployment.
+    # =========================================================================
+    wva:
+      enabled: true
+
+      wellLitPath: fma-autoscaling
+
+      namespace: ""
+
+      # PR #1145 (label-based variant identification) is required for the FMA
+      # path: WVA reads the `llm-d.ai/variant` pod label, and the
+      # ServiceMonitor relabels it onto scraped metrics as `llm_d_ai_variant`.
+      # The tagged v0.6.0 / v0.7.0 GHCR images predate the merge. This custom
+      # build has #1145 baked in.
+      image:
+        repository: quay.io/braulio/llm-d-wva
+        tag: v4
+
+      replicaCount: 1
+
+      controller:
+        enabled: true
+
+      namespaceScoped: true
+
+      metrics:
+        enabled: true
+        port: 8443
+        secure: true
+
+      prometheus:
+        baseUrl: https://thanos-querier.openshift-monitoring.svc.cluster.local
+        port: 9091
+
+      # -----------------------------------------------------------------------
+      # VariantAutoscaling — per-model scaling intent
+      #
+      # Targets the FMA requester ReplicaSet via the conditional in
+      # 27_wva-variantautoscaling.yaml.j2:
+      #   scaleTargetRef:
+      #     kind: ReplicaSet
+      #     name: fma-requester-<model_id_label>
+      # The VA + variant_name suffix are `-fma` (vs. `-decode` for
+      # modelservice), matching the `llm-d.ai/variant` label emitted on
+      # the requester pod template.
+      # -----------------------------------------------------------------------
+      variantAutoscaling:
+        enabled: true
+        minReplicas: 1
+        maxReplicas: 10
+        variantCost: "10.0"
+        slo:
+          tpot: 10
+          ttft: 1000
+
+      # -----------------------------------------------------------------------
+      # HorizontalPodAutoscaler — what actually changes the requester replica count
+      #
+      # The HPA reads `wva_desired_replicas` (emitted by the WVA controller
+      # via prometheus-adapter) and scales the FMA requester ReplicaSet
+      # between min/max. As requester replicas change, FMA's launcher-populator
+      # reconciles launcher pods to match.
+      # -----------------------------------------------------------------------
+      hpa:
+        enabled: true
+        minReplicas: 1
+        maxReplicas: 10
+        targetAvgValue: 1
+
+        behavior:
+          scaleUp:
+            stabilizationWindowSeconds: 120
+            policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+          scaleDown:
+            stabilizationWindowSeconds: 120
+            policies:
+              - type: Percent
+                value: 100
+                periodSeconds: 15
+
+      vllmService:
+        enabled: false
+
+    # =========================================================================
+    # WVA-RELATED CHART VERSIONS
+    # =========================================================================
+    chartVersions:
+      wva: 0.6.0
+      prometheusAdapter: 5.2.0
+
+    # =========================================================================
+    # WORKLOAD / HARNESS
+    #
+    # Same harness + profile as workload-autoscaling.yaml so FMA vs.
+    # modelservice runs are directly comparable.
+    # =========================================================================
+    workDir: "~/data/fma-autoscaling"
+
+    harness:
+      name: inference-perf
+      experimentProfile: shared_prefix_synthetic.yaml
+
+    images:
+      benchmark:
+        repository: ghcr.io/llm-d/llm-d-benchmark
+        tag: nightly
