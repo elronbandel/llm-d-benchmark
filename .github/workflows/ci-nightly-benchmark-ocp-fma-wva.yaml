@@ -115,6 +115,22 @@ on:
         default: 'shared_prefix_synthetic.yaml'
         type: 'string'
 
+  # Self-targeting push trigger so GitHub Actions registers this workflow
+  # before it lands on main. Without this, `workflow_dispatch` returns 404
+  # ("workflow not found on the default branch") because GH only registers
+  # workflow files that are reachable via at least one trigger when first
+  # seen. After this branch merges to main, this `push:` block can be
+  # removed -- main-side workflow_dispatch + schedule will be enough.
+  # Pattern borrowed from the existing ci-nightly-benchmark-ocp-vllmrs.yaml
+  # workflow, which lives only on the `vllm-rs` branch.
+  push:
+    branches:
+      - fma_wva
+    paths:
+      - '.github/workflows/ci-nightly-benchmark-ocp-fma-wva.yaml'
+      - 'config/scenarios/cicd/ocp-fma-wva.yaml'
+      - 'config/specification/cicd/ocp-fma-wva.yaml.j2'
+
   schedule:
     # 30 minutes offset from the FMA-only nightly so they don't compete for
     # cluster resources when both run on the same OCP cluster.
