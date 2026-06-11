@@ -153,8 +153,7 @@ class WvaSmoketestMixin:
         # when fma.enabled — variant suffix becomes `-fma` (vs `-decode` for
         # modelservice). The smoketest must follow the same gate so VA name
         # lookup, HPA scaleTargetRef expectation, and the metric selector's
-        # variant_name all stay aligned. (Pre-PR-#552 the requester was a
-        # ReplicaSet; we tracked the upstream demo to Deployment.)
+        # variant_name all stay aligned.
         fma_enabled = bool(_nested_get(config, "fma", "enabled") or False)
         if fma_enabled:
             va_name = f"{model_id_label}-fma"
