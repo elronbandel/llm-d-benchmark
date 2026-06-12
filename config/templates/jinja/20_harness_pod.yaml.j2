@@ -53,6 +53,10 @@ spec:
       value: "{{ harness.name }}"
     - name: LLMDBENCH_RUN_EXPERIMENT_ID
       value: "{{ experiment_id }}"
+    - name: LLMDBENCH_RUN_EXPERIMENT_PARALLEL_INDEX
+      value: "{{ parallel_index | default(1) }}"
+    - name: LLMDBENCH_RUN_EXPERIMENT_PARALLEL_COUNT
+      value: "{{ parallel_count | default(1) }}"
     - name: RAYON_NUM_THREADS
       value: "{{ harness.inferencePerf.rayonNumThreads }}"
 {% if huggingface.enabled %}

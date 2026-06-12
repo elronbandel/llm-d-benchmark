@@ -263,6 +263,10 @@ class DeployHarnessStep(Step):
                         "stack_type": stack_type,
                         "deploy_method": deploy_method,
                         "cluster_type": context.platform_type,
+                        # This pod's 1-based slot in the parallel set, and the set
+                        # size -- same index as the _${i} results-dir suffix above.
+                        "parallel_index": parallel_idx,
+                        "parallel_count": parallelism,
                     }
                 )
 
